@@ -1,0 +1,291 @@
+library(caret)
+library(missForest)
+library(caret)
+library(glmnet)
+library(mlbench)
+library(psych)
+library(tidyverse)
+library(parallel)
+library(foreach)
+library(doParallel)
+
+setwd("Set your directory here")
+
+A21 <- read.csv("Use phenomic data of 2021 in supplementary data 1 as example in here.csv", sep = "," , header = T,row.names = 1, check.names = F)
+
+A21[1:10,1:10]
+
+##################### Cluster ###############
+
+cluster <- makeCluster(detectCores() - 1) 
+registerDoParallel(cluster)
+
+########### Rust-predicted variable ################
+
+
+A21 <- A21[,c(15,22:ncol(A21))] # Rust in 2021 phenomic data was arranged as predicted variable here in this example.
+A21[1:10,1:10]
+
+
+################ cross valdiation ############
+
+custom <- trainControl(method= "repeatedcv",
+                       number=10,
+                       repeats = 3,
+                       verboseIter = T)
+traits = 1
+cycles = 500
+
+acc_lm1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_lm2 = matrix(nrow = cycles, ncol = traits) # CV2 
+
+acc_ridge1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_ridge2 = matrix(nrow = cycles, ncol = traits) # CV2 
+
+acc_svm1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_svm2 = matrix(nrow = cycles, ncol = traits) # CV2
+
+acc_svmR1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_svmR2 = matrix(nrow = cycles, ncol = traits) # CV2
+
+acc_lasso1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_lasso2 = matrix(nrow = cycles, ncol = traits) # CV2
+
+acc_en1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_en2 = matrix(nrow = cycles, ncol = traits) # CV2
+
+acc_rf1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_rf2 = matrix(nrow = cycles, ncol = traits) # CV2 
+
+acc_pls1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_pls2 = matrix(nrow = cycles, ncol = traits) # CV2 
+
+acc_knn1 = matrix(nrow = cycles, ncol = traits) # CV1 
+acc_knn2 = matrix(nrow = cycles, ncol = traits) # CV2 
+
+
+ridge_varImp<- matrix(nrow = cycles, ncol = traits)
+lasso_varImp<- matrix(nrow = cycles, ncol = traits)
+en_varImp<- matrix(nrow = cycles, ncol = traits)
+rf_varImp<- matrix(nrow = cycles, ncol = traits)
+svm_varImp<- matrix(nrow = cycles, ncol = traits)
+svmR_varImp<- matrix(nrow = cycles, ncol = traits)
+pls_varImp<- matrix(nrow = cycles, ncol = traits)
+knn_varImp<- matrix(nrow = cycles, ncol = traits)
+
+besttune_en <-  matrix(nrow = cycles, ncol = traits)
+model_resample <- matrix(nrow = cycles, ncol = traits)
+
+
+
+for (r in 1:cycles)
+{
+  ind <- createDataPartition(A21$Rust, p=0.7, list=F)
+  
+  A21_train <- A21[ind,]
+  A21_test <- A21[-ind,]
+  
+
+  
+  lm <- train(Rust ~.,
+              A21_train,
+              method= 'lm',
+              trControl= custom)
+  
+  predicted_A21_train_Rust_lm <- predict(lm,A21_train)
+  acc_lm1[r,1] <- cor(predicted_A21_train_Rust_lm , A21_train$Rust, use="complete")  
+  
+  predicted_A21_test_Rust_lm <- predict(lm,A21_test)
+  acc_lm2[r,1] <- cor(predicted_A21_test_Rust_lm , A21_test$Rust, use="complete") 
+
+  
+  
+  ridge <- train(Rust~.,
+                 A21_train,
+                 method = 'glmnet',
+                 tuneGrid= expand.grid(alpha=0,
+                                       lambda = seq(0.0001,1, length=5)),
+                 trControl= custom)
+  
+  
+  predicted_A21_train_Rust_ridge <- predict(ridge,A21_train)
+  acc_ridge1[r,1] <- cor(predicted_A21_train_Rust_ridge , A21_train$Rust, use="complete")  
+  
+  predicted_A21_test_Rust_ridge <- predict(ridge,A21_test)
+  acc_ridge2[r,1] <- cor(predicted_A21_test_Rust_ridge , A21_test$Rust, use="complete") 
+  
+  varImpridge <- varImp(ridge, scale = T)$importance
+  varImpridge[,2] <- rownames(varImpridge)
+  ridge_varImp[[r]]<- list(varImpridge)  
+  
+  
+  lasso <- train(Rust~.,
+                 A21_train,
+                 method = 'glmnet',
+                 tuneGrid= expand.grid(alpha=1,
+                                       lambda = seq(0.0001,1, length=5)),
+                 trControl= custom)
+  
+  predicted_A21_train_Rust_lasso <- predict(lasso,A21_train)
+  acc_lasso1[r,1] <- cor(predicted_A21_train_Rust_lasso , A21_train$Rust, use="complete")  
+  
+  predicted_A21_test_Rust_lasso <- predict(lasso,A21_test)
+  acc_lasso2[r,1] <- cor(predicted_A21_test_Rust_lasso , A21_test$Rust, use="complete") 
+  
+  varImp(lasso)
+
+  varImplasso <- varImp(lasso, scale = T)$importance
+  varImplasso[,2] <- rownames(varImplasso)
+  lasso_varImp[[r]]<- list(varImplasso)
+  
+  
+  en <- train(Rust~.,
+              A21_train,
+              method = 'glmnet',
+              tuneGrid= expand.grid(alpha=seq(0,1, length=10),
+                                    lambda = seq(0.0001,1, length=5)),
+              trControl= custom)
+  
+  predicted_A21_train_Rust_en <- predict(en,A21_train)
+  acc_en1[r,1] <- cor(predicted_A21_train_Rust_en , A21_train$Rust, use="complete")  
+  
+  predicted_A21_test_Rust_en <- predict(en,A21_test)
+  acc_en2[r,1] <- cor(predicted_A21_test_Rust_en , A21_test$Rust, use="complete") 
+  
+  
+  besttune_en[[r]] <-list(en$bestTune)
+
+  varImpen <- varImp(en, scale = T)$importance
+  varImpen[,2] <- rownames(varImpen)
+  en_varImp[[r]]<- list(varImpen)
+  
+  
+  tunegridrf <- expand.grid(.mtry=c(1:50))
+  rf = train(Rust~.,
+             A21_train,
+             method = "rf",
+             tuneGrid = tunegridrf,
+             ntree=1000,
+             trControl=custom)
+  
+  
+  predicted_A21_train_Rust_rf <- predict(rf,A21_train)
+  acc_rf1[r,1] <- cor(predicted_A21_train_Rust_rf , A21_train$Rust, use="complete")  
+  
+  predicted_A21_test_Rust_rf <- predict(rf,A21_test)
+  acc_rf2[r,1] <- cor(predicted_A21_test_Rust_rf , A21_test$Rust, use="complete") 
+  
+
+  varImprf <- varImp(rf, scale = T)$importance
+  varImprf[,2] <- rownames(varImprf)
+  rf_varImp[[r]]<- list(varImprf)
+  
+  tunegridsvm = expand.grid(C = c(1:5))
+  svm <- train(Rust~.,
+               A21_train,
+               method = "svmLinear",
+               tuneGrid = tunegridsvm,
+               preProcess = c("center","scale"),
+               trControl= custom)
+  
+ 
+  
+  predicted_A21_train_Rust_svm <- predict(svm,A21_train)
+  acc_svm1[r,1] <- cor(predicted_A21_train_Rust_svm , A21_train$Rust, use="complete")  
+  
+  predicted_A21_test_Rust_svm <- predict(svm,A21_test)
+  acc_svm2[r,1] <- cor(predicted_A21_test_Rust_svm , A21_test$Rust, use="complete") 
+  
+  
+  varImpsvm <- varImp(svm, scale = T)$importance
+  varImpsvm[,2] <- rownames(varImpsvm)
+  svm_varImp[[r]]<- list(varImpsvm)  
+  
+  
+  
+  svmR <- train(Rust~.,
+               A21_train,
+               method = "svmRadial",
+               tuneLength = 10,
+               preProcess = c("center","scale"),
+               trControl= custom)
+  
+
+  predicted_A21_train_Rust_svmR <- predict(svmR,A21_train)
+  acc_svmR1[r,1] <- cor(predicted_A21_train_Rust_svmR , A21_train$Rust, use="complete")  
+  
+  predicted_A21_test_Rust_svmR <- predict(svmR,A21_test)
+  acc_svmR2[r,1] <- cor(predicted_A21_test_Rust_svmR , A21_test$Rust, use="complete")
+
+  
+  varImpsvmR <- varImp(svmR, scale = T)$importance
+  varImpsvmR[,2] <- rownames(varImpsvmR)
+  svmR_varImp[[r]]<- list(varImpsvmR)  
+  
+  
+  
+  
+
+  pls <- train(Rust~.,
+               A21_train,
+               method = "pcr",
+               scale = TRUE,
+               trControl = custom,
+               tuneLength = 100
+  )
+  
+  
+
+  
+  predicted_A21_train_Rust_pls <- predict(pls,A21_train)
+  acc_pls1[r,1] <- cor(predicted_A21_train_Rust_pls , A21_train$Rust, use="complete")  
+  
+  predicted_A21_train_Rust_pls <- predict(pls,A21_test)
+  acc_pls2[r,1] <- cor(predicted_A21_train_Rust_pls , A21_test$Rust, use="complete") 
+
+  
+  varImppls <- varImp(pls, scale = T)$importance
+  varImppls[,2] <- rownames(varImppls)
+  pls_varImp[[r]]<- list(varImppls)
+  
+  
+  knn <- train(Rust~.,
+               A21_train,            
+               method="knn",
+               tuneLenght=100,
+               trControl=custom,
+               preProc=c("center", "scale"))
+  
+  
+  
+  predicted_A21_train_Rust_knn <- predict(knn,A21_train)
+  acc_knn1[r,1] <- cor(predicted_A21_train_Rust_knn , A21_train$Rust, use="complete")  
+  
+  predicted_A21_test_Rust_knn <- predict(knn,A21_test)
+  acc_knn2[r,1] <- cor(predicted_A21_test_Rust_knn , A21_test$Rust, use="complete") 
+  
+  varImpknn <- varImp(knn, scale = T)$importance
+  varImpknn[,2] <- rownames(varImpknn)
+  knn_varImp[[r]]<- list(varImpknn)
+  
+  
+  
+  model_list <- list(LM = lm,
+                     SVM = svm,
+                     SVMR = svmR,
+                     Ridge = ridge,
+                     Lasso =lasso,
+                     Elasticnet = en,
+                     RandomForest = rf,
+                     PLS= pls,
+                     KNN=knn
+  )
+  
+  model_resample[[r]] <-list(resamples(model_list)$values) 
+  
+  
+}
+
+write.csv(model_resample,
+          "set your directory here \\model_resample.csv")
+
